@@ -276,10 +276,10 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
 
 """-------------------------Set parameters-------------------------"""
 if __name__ == "__main__":
-    input_dir = "E:\\OneDrive\\OneDrive - University of Cambridge\\Documents\\Coding\\DPS_hku\\data_new_65536\\Origin"
-    output_dir = "E:\OneDrive\OneDrive - University of Cambridge\Documents\Coding\DPS_hku\gum_removal\segment\origin"
-    input_dir_label = "E:\\OneDrive\\OneDrive - University of Cambridge\\Documents\\Coding\\DPS_hku\\data_new_65536\\Label"
-    output_dir_label = "E:\OneDrive\OneDrive - University of Cambridge\Documents\Coding\DPS_hku\gum_removal\segment\label"
+    input_dir = "D:\sunny\Codes\DPS\data\Origin"
+    output_dir = "D:\sunny\Codes\DPS\data\Origin_seg"
+    input_dir_label = "D:\sunny\Codes\DPS\data\Label"
+    output_dir_label = "D:\sunny\Codes\DPS\data\Label_seg"
 
     y_threshold = 11.0
     normal_threshold = 0.986 
