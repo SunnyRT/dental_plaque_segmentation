@@ -156,6 +156,28 @@ def region_growing_segmentation(mesh, adjacency_list, seed_index, seg_labels, y_
     return seg_labels
 
 
+
+def display_region_growth_outcome(input_file_path, output_file_path, seg_labels):
+    # Duplicate the original mesh
+    # Update the vertex colors based on labels for visualiation
+
+    shutil.copyfile(input_file_path, output_file_path)
+    segmented_mesh = o3d.io.read_triangle_mesh(output_file_path)
+
+    colors = np.asarray(segmented_mesh.vertex_colors)
+    for i in range(len(seg_labels)):
+        if seg_labels[i] == 1:
+            colors[i] = [0, 1, 0]  # Green for label 1
+        elif seg_labels[i] == 0:
+            colors[i] = [1, 0, 0]  # Red for label 0
+        # Else keep the original color for label -1
+
+    segmented_mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
+    o3d.io.write_triangle_mesh(output_file_path, segmented_mesh)
+
+
+
+
 def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, y_threshold, normal_threshold, color_threshold):
     for file_name in os.listdir(input_dir):
         # split by "_" to get the base name
