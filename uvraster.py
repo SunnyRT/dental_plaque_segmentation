@@ -97,14 +97,17 @@ def process_single_mesh(intraoral_mesh, label_mesh, save_dir, mesh_name):
 
 
     """"""""""""""""""""""""""" 4. Generate 2D Images via Rasterization """""""""""""""""""""""""""
-    # Convert uv cooridnates to pixel coordinates, scaling theta to [0, 8*1024) range
+    px_h = 256 # y axis resolution
+    px_w = px_h * 8 # theta axis resolution
+    
+    # Convert uv cooridnates to pixel coordinates, scaling theta to [0,2048) range
     uv_pixel_out = np.copy(uv_norm_out)
-    uv_pixel_out[:, 0] = (uv_pixel_out[:, 0] * 8191).astype(np.int32)
-    uv_pixel_out[:, 1] = (uv_pixel_out[:, 1] * 1023).astype(np.int32)
+    uv_pixel_out[:, 0] = (uv_pixel_out[:, 0] * px_w-1).astype(np.int32)
+    uv_pixel_out[:, 1] = (uv_pixel_out[:, 1] * px_h-1).astype(np.int32)
 
     uv_pixel_in = np.copy(uv_norm_in)
-    uv_pixel_in[:, 0] = (uv_pixel_in[:, 0] * 8191).astype(np.int32)
-    uv_pixel_in[:, 1] = (uv_pixel_in[:, 1] * 1023).astype(np.int32)
+    uv_pixel_in[:, 0] = (uv_pixel_in[:, 0] * px_w-1).astype(np.int32) 
+    uv_pixel_in[:, 1] = (uv_pixel_in[:, 1] * px_h-1).astype(np.int32)
 
 
     # Calculate mean projection depth for each face
@@ -128,12 +131,10 @@ def process_single_mesh(intraoral_mesh, label_mesh, save_dir, mesh_name):
     sorted_face_labels_in = (sorted_face_labels_in * 255).astype(np.uint8)
 
     # Initialize the large 2D image (1024x8192) for the entire dataset
-    entire_origin_image_out = np.zeros((1024, 8192, 3), dtype=np.uint8)
-    entire_origin_image_in = np.zeros((1024, 8192, 3), dtype=np.uint8)
-    entire_label_image_out = np.zeros((1024, 8192, 3), dtype=np.uint8)
-    entire_label_image_in = np.zeros((1024, 8192, 3), dtype=np.uint8)
-
-
+    entire_origin_image_out = np.zeros((px_h, px_w, 3), dtype=np.uint8)
+    entire_origin_image_in = np.zeros((px_h, px_w, 3), dtype=np.uint8)
+    entire_label_image_out = np.zeros((px_h, px_w, 3), dtype=np.uint8)
+    entire_label_image_in = np.zeros((px_h, px_w, 3), dtype=np.uint8)
 
     # Rasterize the triangles onto the large image
     # Crop the large image into 8 sections, each with size 1024x1024x3
@@ -144,63 +145,68 @@ def process_single_mesh(intraoral_mesh, label_mesh, save_dir, mesh_name):
             face_color = tuple(int(c) for c in sorted_face_colors[i])  # Convert to tuple for cv2.fillPoly
             cv2.fillPoly(large_image, [pts], face_color)
 
-        section_images = np.array([large_image[:, i*1024:(i+1)*1024] for i in range(8)])
+        section_images = np.array([large_image[:, i*px_h:(i+1)*px_h] for i in range(8)])
         return section_images, large_image
 
     origin_images_out, entire_origin_image_out = rasterize(sorted_triangles_out, sorted_face_colors_out, uv_pixel_out, entire_origin_image_out)
     origin_images_in, entire_origin_image_in = rasterize(sorted_triangles_in, sorted_face_colors_in, uv_pixel_in, entire_origin_image_in)
-    origin_images = np.array([origin_images_out, origin_images_in]) # shape (2, 8, 1024, 1024, 3)
+    origin_images = np.array([origin_images_out, origin_images_in])
+    # flatten into (16, 256, 256, 3)
+    origin_images = origin_images.reshape(-1, px_h, px_h, 3)
 
     label_images_out, entire_label_image_out = rasterize(sorted_triangles_out, sorted_face_labels_out, uv_pixel_out, entire_label_image_out)
     label_images_in, entire_label_image_in = rasterize(sorted_triangles_in, sorted_face_labels_in, uv_pixel_in, entire_label_image_in)
-    label_images = np.array([label_images_out, label_images_in]) # shape (2, 8, 1024, 1024, 3)
+    label_images = np.array([label_images_out, label_images_in])
+    # flatten into (16, 256, 256, 3)
+    label_images = label_images.reshape(-1, px_h, px_h, 3)
+    label_images_binary = convert_to_binary(label_images)
 
-
+    
     """"""""""""""""""""""""""" 5. Visualize and Save """""""""""""""""""""""""""
     # Save the .npy image files in square sections
     save_origin_path = os.path.join(save_dir, "origin", f'{mesh_name}.npy')
     save_label_path = os.path.join(save_dir, "label", f'{mesh_name}.npy')
     # Save the section images as a single npy file
     np.save(save_origin_path, origin_images)
-    np.save(save_label_path, label_images)
+    np.save(save_label_path, label_images_binary)
 
+    print(f"Saved {mesh_name}.npy")
 
+    # # Display and Save the entire images as jpg
+    # fig, ax = plt.subplots(4,1, figsize=(15, 10))
 
-    # Display and Save the entire images as jpg
-    fig, ax = plt.subplots(4,1, figsize=(15, 10))
+    # ax[0].imshow(entire_origin_image_out)
+    # ax[0].set_title("Entire Origin Image Outward")
+    # ax[0].axis('off')
 
-    ax[0].imshow(entire_origin_image_out)
-    ax[0].set_title("Entire Origin Image Outward")
-    ax[0].axis('off')
+    # ax[1].imshow(entire_label_image_out)
+    # ax[1].set_title("Entire Label Image Outward")
+    # ax[1].axis('off')
 
-    ax[1].imshow(entire_label_image_out)
-    ax[1].set_title("Entire Label Image Outward")
-    ax[1].axis('off')
+    # ax[2].imshow(entire_origin_image_in)
+    # ax[2].set_title("Entire Origin Image Inward")
+    # ax[2].axis('off')
 
-    ax[2].imshow(entire_origin_image_in)
-    ax[2].set_title("Entire Origin Image Inward")
-    ax[2].axis('off')
+    # ax[3].imshow(entire_label_image_in)
+    # ax[3].set_title("Entire Label Image Inward")
+    # ax[3].axis('off')
 
-    ax[3].imshow(entire_label_image_in)
-    ax[3].set_title("Entire Label Image Inward")
-    ax[3].axis('off')
-
-    plt.savefig(os.path.join(save_dir, "jpg", f"{mesh_name}.jpg"))
-    # plt.show()
+    # plt.savefig(os.path.join(save_dir, "jpg", f"{mesh_name}.jpg"))
+    # # plt.show()
 
     """"""""""""""""""""""""""" 6. Test the Saved .npy Files """""""""""""""""""""""""""
-    tensor_origin = np.load(save_origin_path)
-    tensor_label = np.load(save_label_path)
-    origin_image_test = tensor_origin[1, 4, :, :, :]
-    label_image_test = tensor_label[1, 4, :, :, :]
+    # tensor_origin = np.load(save_origin_path)
+    # tensor_label = np.load(save_label_path)
+    # origin_image_test = tensor_origin[1, 4, :, :, :]
+    # label_image_test = tensor_label[1, 4, :, :, :]
 
-    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    # fig, ax = plt.subplots(1, 2, figsize=(10, 5))
 
-    ax[0].imshow(origin_image_test)
-    ax[0].axis("off")
-    ax[1].imshow(label_image_test)
-    ax[1].axis("off")
-    # plt.show()
+    # ax[0].imshow(origin_image_test)
+    # ax[0].axis("off")
+    # ax[1].imshow(label_image_test)
+    # ax[1].axis("off")
+    # # plt.show()
     
 
 
@@ -346,6 +352,9 @@ def get_face_colors(triangles, vertex_colors):
     return np.array(face_colors)
 
 
+def convert_to_binary(label_images):
+    binary_images = np.any(label_images != 0, axis=-1).astype(np.uint8)
+    return binary_images
 
 
 
