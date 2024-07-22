@@ -1,0 +1,21 @@
+# Create and activate a new conda environment
+conda create -n blender_env python=3.9 -y
+conda activate blender_env
+
+# Install Jupyter Notebook
+conda install jupyter -y
+
+# Install Pillow
+conda install pillow -y
+
+# Optional: Install additional useful packages
+conda install numpy scipy matplotlib -y
+conda install -c open3d-admin open3d -y
+
+# Install IPython
+conda install ipython -y
+
+# Install pymeshlab for alternative mesh processing
+pip install pymeshlab
+
+# Ensure Blender is installed (this step is manual, download from blender.org)
