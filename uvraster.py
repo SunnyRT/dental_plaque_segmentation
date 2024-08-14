@@ -164,8 +164,8 @@ def process_single_mesh(intraoral_mesh, label_mesh, save_dir, mesh_name):
     
     """"""""""""""""""""""""""" 5. Visualize and Save """""""""""""""""""""""""""
     # Save the .npy image files in square sections
-    save_origin_path = os.path.join(save_dir, "origin", f'{mesh_name}.npy')
-    save_label_path = os.path.join(save_dir, "label", f'{mesh_name}.npy')
+    save_origin_path = os.path.join(save_dir, "origin", f'{mesh_name}.png')
+    save_label_path = os.path.join(save_dir, "label", f'{mesh_name}.png')
     # Save the section images as a single npy file
     np.save(save_origin_path, origin_images)
     np.save(save_label_path, label_images_binary)
