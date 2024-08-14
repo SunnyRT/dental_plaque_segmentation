@@ -2,19 +2,18 @@ import open3d as o3d
 import numpy as np
 import os,sys
 
-path_ori = r"D:\sunny\Codes\DPS\data_raw_teethseg\label"
-# path     = r'D:\sunny\Codes\DPS\data_raw_teethseg\label'
-all_files = os.listdir(path_ori)
+path = r"D:\sunny\Codes\DPS\data_raw_teethseg\origin"
+all_files = os.listdir(path)
 
-save_path = r"D:\sunny\Codes\DPS\data_8w\label"
+save_path = r"D:\sunny\Codes\DPS\data_8w\3d_ply\origin"
 
 for file in all_files:
-
-    filepath = os.path.join(path_ori,file)
-    mesh = o3d.io.read_triangle_mesh(filepath)
-    mesh_smp = mesh.simplify_quadric_decimation(target_number_of_triangles=80000)
-    o3d.io.write_triangle_mesh(os.path.join(save_path, file), mesh_smp)
-    print(file)
+    if file == '000702.ply' or file == '000801.ply':
+        filepath = os.path.join(path,file)
+        mesh = o3d.io.read_triangle_mesh(filepath)
+        mesh_smp = mesh.simplify_quadric_decimation(target_number_of_triangles=80000)
+        o3d.io.write_triangle_mesh(os.path.join(save_path, file), mesh_smp)
+        print(file)
 
 print("Done")
 

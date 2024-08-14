@@ -8,6 +8,9 @@ import os
 
 
 
+
+
+
 def process_all_files(origin_dir, label_dir, save_dir):
     for file in os.listdir(origin_dir):
         if file.endswith(".ply"):
@@ -15,286 +18,263 @@ def process_all_files(origin_dir, label_dir, save_dir):
             print(f"Processing {mesh_name}...")
             origin_file_path = f"{origin_dir}/{mesh_name}_origin.ply"
             label_file_path = f"{label_dir}/{mesh_name}.ply"
-            intraoral_mesh = o3d.io.read_triangle_mesh(origin_file_path)
+            origin_mesh = o3d.io.read_triangle_mesh(origin_file_path)
             label_mesh = o3d.io.read_triangle_mesh(label_file_path)
-            process_single_mesh(intraoral_mesh, label_mesh, save_dir, mesh_name)
+            process_single_mesh(origin_mesh, label_mesh, save_dir, mesh_name)
 
 
-def process_single_mesh(intraoral_mesh, label_mesh, save_dir, mesh_name):
+def process_single_mesh(origin_mesh, label_mesh, save_dir, mesh_name):
+    
+    """"""""""""""""1. Recenter """""""""""""""
+    # Remove duplicated triangles of the meshes
+    origin_mesh.remove_duplicated_triangles()
+    label_mesh.remove_duplicated_triangles()
+
     # Recenter the meshes
-    intraoral_mesh = intraoral_mesh.translate(-intraoral_mesh.get_center())
+    origin_mesh = origin_mesh.translate(-origin_mesh.get_center())
     label_mesh = label_mesh.translate(-label_mesh.get_center())
 
 
-    """"""""""""""""1. Create Circle and Extrude to Cylinders as Projection Screens"""""""""""""""
-
-    # Calculate the radii
-    distances = np.linalg.norm(np.asarray(intraoral_mesh.vertices)[:, [0, 2]], axis=1)
-    outer_radius = np.max(distances)
-    inner_radius = np.min(distances)
-    n_points = 100
-
-    # Calculate the extrusion length
-    y_min = np.min(np.asarray(intraoral_mesh.vertices)[:, 1])
-    y_max = np.max(np.asarray(intraoral_mesh.vertices)[:, 1])
-    extrusion_length_pos = y_max
-    extrusion_length_neg = y_min
-
 
     """""""""""""""""""""""""""""""""" 2. Mesh Separation (Inward and Outward)"""""""""""""""""""""""""""""""""""
-    # Calculate vertex normals
-    vertices = np.asarray(intraoral_mesh.vertices)
-    triangles = np.asarray(intraoral_mesh.triangles)
-    intraoral_mesh.compute_vertex_normals()
-    vertex_normals = np.asarray(intraoral_mesh.vertex_normals)
-    vertex_colors = np.asarray(intraoral_mesh.vertex_colors)
-
-    # Classify each vertex as outward-facing or inward-facing
-    outward_vertex_mask = np.array([np.dot(vertex_normal, vertex) > 0 for vertex_normal, vertex in zip(vertex_normals, vertices)])
-    inward_vertex_mask = ~outward_vertex_mask
-
-    # Convert vertex mask into face mask
-    outward_face_mask = np.any(outward_vertex_mask[triangles], axis=1)
-    inward_face_mask = ~outward_face_mask
-
-    # Clean mesh separation
-    mesh_in, mesh_out = clean_io_separation(intraoral_mesh, outward_face_mask, inward_face_mask)
-    label_mesh_in, label_mesh_out = clean_io_separation(label_mesh, outward_face_mask, inward_face_mask)
-
+    in_triangles, out_triangles = separate_io_triangles(origin_mesh)
 
     """"""""""""""""""""""""""" 3. Project 3D Meshes onto Cylinders as Projection Screens"""""""""""""""""""""""""""
-    # Extract the vertices, triangles, vertex colors and face colors
-    vertices_out = np.asarray(mesh_out.vertices)
-    triangles_out = np.asarray(mesh_out.triangles)
-    vertex_colors_out = np.asarray(mesh_out.vertex_colors)
-    face_colors_out = get_face_colors(triangles_out, vertex_colors_out)
-    vertex_labels_out = np.asarray(label_mesh_out.vertex_colors)
-    face_labels_out = get_face_colors(triangles_out, vertex_labels_out)
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    # Execution of UV projection (for all vertices in each of 3 cases)
 
-    vertices_in = np.asarray(mesh_in.vertices)
-    triangles_in = np.asarray(mesh_in.triangles)
-    vertex_colors_in = np.asarray(mesh_in.vertex_colors)
-    face_colors_in = get_face_colors(triangles_in, vertex_colors_in)
-    vertex_labels_in = np.asarray(label_mesh_in.vertex_colors)
-    face_labels_in = get_face_colors(triangles_in, vertex_labels_in)
+    # Get the vertices of the origin mesh
+    vertices = np.asarray(origin_mesh.vertices)
 
-    # Flip face_labels colors (white (1,1,1) to black (0,0,0), black to white)
-    face_labels_out = 1 - face_labels_out
-    face_labels_in = 1 - face_labels_in
+    # UV mapping for all vertices in 3 cases NOTE: all vertices are projected in each case!!!!!!
+    uv_out, vert_depth_out = UVmap_cylindrical(vertices, if_inward=False)
+    uv_in, vert_depth_in = UVmap_cylindrical(vertices, if_inward=True)
 
-    # Projection
-    projected_vertices_out, vert_depth_out = project_onto_cylinder(vertices_out, outer_radius)
-    projected_vertices_in, vert_depth_in = project_onto_cylinder(vertices_in, inner_radius)
+    uv_norm_out = normalize_uv_coords(uv_out, (0, 2*np.pi), (-9, 7), with_nl=True)
+    uv_norm_in = normalize_uv_coords(uv_in, (0, 2*np.pi), (-8, 8), with_nl=True)
 
-    # Flatten the projected vertices onto a 2D plane screen
-    uv_out = flatten_2d_uv(projected_vertices_out)
-    uv_in = flatten_2d_uv(projected_vertices_in)
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    # Keep track of vertices which belong to each case out of all vertices
+    # Find unique vertex indices for each case
+    out_vert_idx = np.unique(out_triangles.flatten())
+    in_vert_idx = np.unique(in_triangles.flatten())
 
-    # Normalize the uv coordinates into [0, 1]
-    uv_norm_out = normalize_uv_coordinates(uv_out, is_outward=True)
-    uv_norm_in = normalize_uv_coordinates(uv_in, is_outward=False)
+    # # Print lengths for verification
+    # print(out_vert_idx.shape, in_vert_idx.shape)
+    # print(vertices.shape)
+    # assert out_vert_idx.shape[0] + in_vert_idx.shape[0] == vertices.shape[0], "Vertices are not correctly separated"
+
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    # COLORS!!!!
+    vertices_originRGB_raw = np.asarray(origin_mesh.vertex_colors) # r,g,b within (0-1)
+    vertices_labelRGB_raw = np.asarray(label_mesh.vertex_colors) # black/grey/non-white >= (0,0,0) for plaque, white=(1,1,1) for non-plaque
+
+    # Convert RGB format into 0-255
+    # Flip plaque representation from dark (black or grey) to white
+    vertices_originRGB = (vertices_originRGB_raw * 255).astype(np.uint8) # 0-255
+    vertices_labelRGB = ((1-vertices_labelRGB_raw) * 255).astype(np.uint8) # 0-255, non-black>(0,0,0) for plaue, black=(0,0,0) for non-plaque
 
 
 
     """"""""""""""""""""""""""" 4. Generate 2D Images via Rasterization """""""""""""""""""""""""""
-    px_h = 256 # y axis resolution
-    px_w = px_h * 8 # theta axis resolution
-    
-    # Convert uv cooridnates to pixel coordinates, scaling theta to [0,2048) range
-    uv_pixel_out = np.copy(uv_norm_out)
-    uv_pixel_out[:, 0] = (uv_pixel_out[:, 0] * px_w-1).astype(np.int32)
-    uv_pixel_out[:, 1] = (uv_pixel_out[:, 1] * px_h-1).astype(np.int32)
-
-    uv_pixel_in = np.copy(uv_norm_in)
-    uv_pixel_in[:, 0] = (uv_pixel_in[:, 0] * px_w-1).astype(np.int32) 
-    uv_pixel_in[:, 1] = (uv_pixel_in[:, 1] * px_h-1).astype(np.int32)
-
-
-    # Calculate mean projection depth for each face
-    face_depth_out = np.mean(vert_depth_out[triangles_out], axis=1)
-    face_depth_in = np.mean(vert_depth_in[triangles_in], axis=1)
-
-    # Sort the faces by depth (ascending)
-    sorted_indices_out = np.argsort(face_depth_out)
-    sorted_triangles_out = triangles_out[sorted_indices_out]
-    sorted_face_colors_out = face_colors_out[sorted_indices_out]
-    sorted_face_colors_out = (sorted_face_colors_out * 255).astype(np.uint8)
-    sorted_face_labels_out = face_labels_out[sorted_indices_out]
-    sorted_face_labels_out = (sorted_face_labels_out * 255).astype(np.uint8)
-
-
-    sorted_indices_in = np.argsort(face_depth_in)
-    sorted_triangles_in = triangles_in[sorted_indices_in]
-    sorted_face_colors_in = face_colors_in[sorted_indices_in]
-    sorted_face_colors_in = (sorted_face_colors_in * 255).astype(np.uint8)
-    sorted_face_labels_in = face_labels_in[sorted_indices_in]
-    sorted_face_labels_in = (sorted_face_labels_in * 255).astype(np.uint8)
-
-    # Initialize the large 2D image (1024x8192) for the entire dataset
-    entire_origin_image_out = np.zeros((px_h, px_w, 3), dtype=np.uint8)
-    entire_origin_image_in = np.zeros((px_h, px_w, 3), dtype=np.uint8)
-    entire_label_image_out = np.zeros((px_h, px_w, 3), dtype=np.uint8)
-    entire_label_image_in = np.zeros((px_h, px_w, 3), dtype=np.uint8)
-
-    # Rasterize the triangles onto the large image
-    # Crop the large image into 8 sections, each with size 1024x1024x3
-    def rasterize(sorted_triangles, sorted_face_colors, uv_pixel, large_image):
-        """ Return section_images as numpy arrays, with shape (8, 1024, 1024, 3)"""
-        for i, triangle in enumerate(sorted_triangles):
-            pts = uv_pixel[triangle].reshape((-1, 1, 2)).astype(np.int32)
-            face_color = tuple(int(c) for c in sorted_face_colors[i])  # Convert to tuple for cv2.fillPoly
-            cv2.fillPoly(large_image, [pts], face_color)
-
-        section_images = np.array([large_image[:, i*px_h:(i+1)*px_h] for i in range(8)])
-        return section_images, large_image
-
-    origin_images_out, entire_origin_image_out = rasterize(sorted_triangles_out, sorted_face_colors_out, uv_pixel_out, entire_origin_image_out)
-    origin_images_in, entire_origin_image_in = rasterize(sorted_triangles_in, sorted_face_colors_in, uv_pixel_in, entire_origin_image_in)
-    origin_images = np.array([origin_images_out, origin_images_in])
-    # flatten into (16, 256, 256, 3)
-    origin_images = origin_images.reshape(-1, px_h, px_h, 3)
-
-    label_images_out, entire_label_image_out = rasterize(sorted_triangles_out, sorted_face_labels_out, uv_pixel_out, entire_label_image_out)
-    label_images_in, entire_label_image_in = rasterize(sorted_triangles_in, sorted_face_labels_in, uv_pixel_in, entire_label_image_in)
-    label_images = np.array([label_images_out, label_images_in])
-    # flatten into (16, 256, 256, 3)
-    label_images = label_images.reshape(-1, px_h, px_h, 3)
-    label_images_binary = convert_to_binary(label_images)
+    img_origin_out, img_label_out, uv_pixel_out = rasterize_uv_to_image(uv_norm_out, vert_depth_out, out_triangles, vertices_originRGB, vertices_labelRGB, px=256, is_binary=False)
+    img_origin_in, img_label_in, uv_pixel_in = rasterize_uv_to_image(uv_norm_in, vert_depth_in, in_triangles, vertices_originRGB, vertices_labelRGB, px=256, is_binary=False)
+    # TODO: Inward / Outward projected images will be patched into 1x8
+    # TODO: Upward projected image will be patched into 2x4
 
     
     """"""""""""""""""""""""""" 5. Visualize and Save """""""""""""""""""""""""""
-    # Save the .npy image files in square sections
-    save_origin_path = os.path.join(save_dir, "origin", f'{mesh_name}.png')
-    save_label_path = os.path.join(save_dir, "label", f'{mesh_name}.png')
-    # Save the section images as a single npy file
-    np.save(save_origin_path, origin_images)
-    np.save(save_label_path, label_images_binary)
 
-    print(f"Saved {mesh_name}.npy")
+    save_origin_path = os.path.join(save_dir, "origin")
+    save_label_path = os.path.join(save_dir, "label")
 
-    # # Display and Save the entire images as jpg
+
+    for idx, (img_origin_xx, img_label_xx) in enumerate(zip([img_origin_in, img_origin_out], [img_label_in, img_label_out])):
+        origin_bgr = cv2.cvtColor(img_origin_xx, cv2.COLOR_RGB2BGR)
+        label_gray = cv2.cvtColor(img_label_xx, cv2.COLOR_RGB2GRAY)
+        cv2.imwrite(os.path.join(save_origin_path, f"{mesh_name}_{idx+1}.png"), origin_bgr)
+        cv2.imwrite(os.path.join(save_label_path, f"{mesh_name}_{idx+1}.png"), label_gray)
+
+    # Save UV pixel coordinates and separation of triangles information in npz format
+    reconst_info = {"uvpx_in": uv_pixel_in, "uvpx_out": uv_pixel_out,
+                    "tri_in": in_triangles, "tri_out": out_triangles}
+    np.savez_compressed(os.path.join(save_dir, "info", f"{mesh_name}.npz"), **reconst_info)
+
+    # Visaulize the rasterized images
+    # Display the in- and outward large image for visualization 
     # fig, ax = plt.subplots(4,1, figsize=(15, 10))
 
-    # ax[0].imshow(entire_origin_image_out)
-    # ax[0].set_title("Entire Origin Image Outward")
+    # ax[0].imshow(img_origin_out)
+    # ax[0].set_title("Outward Facing Projection - Origin")
     # ax[0].axis('off')
 
-    # ax[1].imshow(entire_label_image_out)
-    # ax[1].set_title("Entire Label Image Outward")
+
+    # ax[1].imshow(img_label_out)
+    # ax[1].set_title("Outward Facing Projection - Label")
     # ax[1].axis('off')
 
-    # ax[2].imshow(entire_origin_image_in)
-    # ax[2].set_title("Entire Origin Image Inward")
+    # ax[2].imshow(img_origin_in)
+    # ax[2].set_title("Inward Facing Projection - Origin")
     # ax[2].axis('off')
 
-    # ax[3].imshow(entire_label_image_in)
-    # ax[3].set_title("Entire Label Image Inward")
+    # ax[3].imshow(img_label_in)
+    # ax[3].set_title("Inward Facing Projection - Label")
     # ax[3].axis('off')
 
-    # plt.savefig(os.path.join(save_dir, "jpg", f"{mesh_name}.jpg"))
-    # # plt.show()
+    # plt.show())
 
-    """"""""""""""""""""""""""" 6. Test the Saved .npy Files """""""""""""""""""""""""""
-    # tensor_origin = np.load(save_origin_path)
-    # tensor_label = np.load(save_label_path)
-    # origin_image_test = tensor_origin[1, 4, :, :, :]
-    # label_image_test = tensor_label[1, 4, :, :, :]
+    """"""""""""""""""""""""""" 6. Test map back accuracy """""""""""""""""""""""""""
+    pred_img_label_out = img_label_out/255  
+    pred_img_label_in = img_label_in/255
 
-    # fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    tri_uvpx_in = get_tri_center_uv(in_triangles, uv_pixel_in)
+    tri_uvpx_out = get_tri_center_uv(out_triangles, uv_pixel_out)
+        
 
-    # ax[0].imshow(origin_image_test)
-    # ax[0].axis("off")
-    # ax[1].imshow(label_image_test)
-    # ax[1].axis("off")
-    # # plt.show()
-    
+    tri_pred_label_in = get_tri_pred_label(tri_uvpx_in, pred_img_label_in)
+    tri_pred_label_out = get_tri_pred_label(tri_uvpx_out, pred_img_label_out)
 
+    # Get the GT label for each triangle face
+    tri_GT_labelGRB_in = get_tri_RGB(in_triangles, vertices_labelRGB)/255
+    tri_GT_labelGRB_out = get_tri_RGB(out_triangles, vertices_labelRGB)/255
 
+    # Compare the predicted labels with the ground truth labels for all triangle faces
+    metrics_in = compute_metrics_tri(tri_GT_labelGRB_in, tri_pred_label_in)
+    metrics_out = compute_metrics_tri(tri_GT_labelGRB_out, tri_pred_label_out)
 
+    print(f"Inward: IoU: {metrics_in[0]:.3f}, Dice: {metrics_in[1]:.3f}")
+    print(f"Outward: IoU: {metrics_out[0]:.3f}, Dice: {metrics_out[1]:.3f}")
 
-
-
-
-
-
-
-
-
+    iou_mean = (metrics_in[0] + metrics_out[0]) / 2
+    dice_mean = (metrics_in[1] + metrics_out[1]) / 2
+    print(f"Plaque IoU: {iou_mean:.3f}, Plaque Dice: {dice_mean:.3f}")
 
 
 
+    metrics_in0 = compute_metrics_tri(tri_GT_labelGRB_in, tri_pred_label_in, is_plaque=False)
+    metrics_out0 = compute_metrics_tri(tri_GT_labelGRB_out, tri_pred_label_out, is_plaque=False)
 
-""" 1. Create Circle and Extrude to Cylinders as Projection Screens"""
-# Function to create a circle in the x-z plane
-def create_circle(radius, n_points=100):
-    theta = np.linspace(0, 2 * np.pi, n_points)
-    x = radius * np.cos(theta)
-    z = radius * np.sin(theta)
-    points = np.vstack((x, np.zeros(n_points), z)).T
-    lines = np.column_stack((np.arange(n_points), np.roll(np.arange(n_points), -1)))
-    return points, lines
+    iou0_mean = (metrics_in0[0] + metrics_out0[0]) / 2
+    dice0_mean = (metrics_in0[1] + metrics_out0[1]) / 2
+    print(f"Non-Plaque IoU: {iou0_mean:.3f}, Non-Plaque Dice: {dice0_mean:.3f}")
 
-# Function to extrude the circles in the y direction to create cylinders
-def extrude_circle(points, extrusion_length_pos, extrusion_length_neg):
-    extruded_points = []
-    for y in [extrusion_length_neg, extrusion_length_pos]:
-        extruded_points.append(points + np.array([0, y, 0]))
-    extruded_points = np.vstack(extruded_points)
-    
-    # Create triangular faces for the extrusion
-    n_points = len(points)
-    faces = []
-    for i in range(n_points):
-        next_i = (i + 1) % n_points  # Ensure circular connection
-        # Create two triangles for each face of the cylinder
-        faces.append([i, next_i, next_i + n_points])
-        faces.append([i, next_i + n_points, i + n_points])
-    
-    return extruded_points, faces
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 
 
 """ 2. Mesh Separation (Inward and Outward)"""
-def clean_io_separation(original_mesh, face_mask_out, face_mask_in, threshold=500):
-    """ Preserve only the connected components with number of faces larger than the threshold 
-        within each mask. Remove and add the rest components to the opposite mask.
-        Return the updated face masks for outward-facing and inward-facing faces"""
-    triangles = np.asarray(original_mesh.triangles)
-    vertex_colors = np.asarray(original_mesh.vertex_colors)
+
+
+# Utils function
+def set_difference(A, B):
+    """ Return the elements in A but not in B"""
+    A_view = A.view([('', A.dtype)] * A.shape[1])
+    B_view = B.view([('', B.dtype)] * B.shape[1])
+    C_view = np.setdiff1d(A_view, B_view)
+    C = C_view.view(A.dtype).reshape(-1, A.shape[1])
+    # print(f"initial size: {len(A)}, removed size: {len(B)}, final size: {len(C)}")
+    return C
+
+
+
+# Preserve connected vertices which belong to a big enough / biggest cluster (remove small disconnecting clusters)
+def keep_large_component(mesh, max_only=False, min_size=600):
+    """ Remove small disconnected components from the mesh
+    Args:
+        max_only: if True, only keep the biggest component
+        min_size: only works if max_only is False, 
+            in which case only components with size >= min_size are kept
+        
+    Return:
+        mesh: the mesh with small components removed
+        triangles: the preserved triangles of the mesh
+        removed_triangles: the removed triangles of the mesh"""
+    triangles = np.asarray(mesh.triangles)
+    components = np.array(mesh.cluster_connected_triangles()[0])
+    comp_sizes = np.bincount(components)
+    if max_only: # only keep the biggest component
+        max_comp_index = np.argmax(comp_sizes)
+        large_comp_mask = components == max_comp_index
+
+    else: # keep components with size >= min_size
+        large_comp_indices = np.where(comp_sizes >= min_size)[0]
+        large_comp_mask = np.isin(components, large_comp_indices)
+
+    preserved_triangles = triangles[large_comp_mask]
+    removed_triangles = triangles[np.logical_not(large_comp_mask)]
+    mesh.triangles = o3d.utility.Vector3iVector(preserved_triangles) # update the mesh
+
+    return mesh, preserved_triangles, removed_triangles
+
+
+
+
+""" Inner and Outer Surface Separation"""
+# Separate the original mesh vertices into inward-facing and outward-facing vertices relative to the origin
+# With original (non re-centered mesh)
+def separate_io_triangles(mesh):
+    """ Separate the original mesh triangles into 
+    inward-facing and outward-facing triangles relative to the origin
     
-    mesh_in = copy.deepcopy(original_mesh)
-    triangles_in = triangles[face_mask_in]
-    mesh_in.triangles = o3d.utility.Vector3iVector(triangles_in)
-    triangle_clusters_in, cluster_n_triangles_in, _ = (mesh_in.cluster_connected_triangles())
-    triangle_clusters_in = np.array(triangle_clusters_in)
-    cluster_n_triangles_in = np.array(cluster_n_triangles_in)
-    trimask_in_to_out = cluster_n_triangles_in[triangle_clusters_in] < 500 # mask for triangles to be moved to outward-facing
-    triangles_in_to_out = triangles_in[trimask_in_to_out]
-    triangles_in_reduced = triangles_in[~trimask_in_to_out]
+    All vertices are preserved."""
 
-    mesh_out = copy.deepcopy(original_mesh)
-    triangles_out = triangles[face_mask_out]
-    mesh_out.triangles = o3d.utility.Vector3iVector(triangles_out)
-    triangle_clusters_out, cluster_n_triangles_out, _ = (mesh_out.cluster_connected_triangles())
-    triangle_clusters_out = np.array(triangle_clusters_out)
-    cluster_n_triangles_out = np.array(cluster_n_triangles_out)
-    trimask_out_to_in = cluster_n_triangles_out[triangle_clusters_out] < 500 # mask for triangles to be moved to inward-facing
-    triangles_out_to_in = triangles_out[trimask_out_to_in]
-    triangles_out_reduced = triangles_out[~trimask_out_to_in]
+    vertices = np.asarray(mesh.vertices)
+    triangles = np.asarray(mesh.triangles)
+    viewpt1 = np.mean(vertices, axis=0)
+    vertices_vp1 = vertices - viewpt1
+    viewpt2 = viewpt1 / 2
+    vertices_vp2 = vertices - viewpt2
 
-    triangles_in_updated = np.concatenate((triangles_in_reduced, triangles_out_to_in))
-    triangles_out_updated = np.concatenate((triangles_out_reduced, triangles_in_to_out))
+    normals = np.asarray(mesh.vertex_normals)
 
-    mesh_in.triangles = o3d.utility.Vector3iVector(triangles_in_updated)
-    mesh_out.triangles = o3d.utility.Vector3iVector(triangles_out_updated)
-    
-    # Remove unreferenced vertices
-    mesh_in.remove_unreferenced_vertices()
-    mesh_out.remove_unreferenced_vertices()
+    # analyse the mesh in 3 parts (based on z coords)
+    # each part has different viewpt for normal thresholding
+    pos_mask1 = vertices[:, 2] > viewpt1[2]
+    in_vert_mask1 = np.logical_and(np.sum(normals * vertices_vp1, axis=1) < 0, pos_mask1)
+    pos_mask2 = np.logical_and(viewpt2[2] < vertices[:, 2], vertices[:, 2] < viewpt1[2])
+    in_vert_mask2 = np.logical_and(np.sum(normals * vertices_vp2, axis=1) < 0, pos_mask2)
+    pos_mask3 = vertices[:, 2] < viewpt2[2]
+    in_vert_mask3 = np.logical_and(np.sum(normals * vertices, axis=1) < 0, pos_mask3)
 
-    return mesh_in, mesh_out
+    # merge the 3 masks
+    in_vert_mask = in_vert_mask1 + in_vert_mask2 + in_vert_mask3
+
+    # separate triangles
+    in_triangles_mask = np.all(in_vert_mask[triangles], axis=1)
+    in_triangles = triangles[in_triangles_mask]
+    in_mesh = copy.deepcopy(mesh)
+    in_mesh.triangles = o3d.utility.Vector3iVector(in_triangles)
+
+    out_triangles_mask = ~in_triangles_mask
+    out_triangles = triangles[out_triangles_mask]
+    out_mesh = copy.deepcopy(mesh)
+    out_mesh.triangles = o3d.utility.Vector3iVector(out_triangles)
+
+    assert len(in_triangles) + len(out_triangles) == len(triangles), "Triangles are not correctly separated"
+
+    # clean up
+    in_mesh, in_triangles, in_to_out_triangles = keep_large_component(in_mesh, min_size=100)
+    out_mesh, out_triangles, out_to_in_triangles = keep_large_component(out_mesh, min_size=100)
+
+    # add out_to_in_triangles to in_triangles
+    in_triangles = np.concatenate([in_triangles, out_to_in_triangles])
+    out_triangles = np.concatenate([out_triangles, in_to_out_triangles])
+
+    return in_triangles, out_triangles
 
 
 
@@ -302,59 +282,167 @@ def clean_io_separation(original_mesh, face_mask_out, face_mask_in, threshold=50
 
 """ 3. Project 3D Meshes onto Cylinders as Projection Screens"""
 # Project vertices onto the respective cylinders
-def project_onto_cylinder(vertices, radius):
-    projected_vertices = vertices.copy()
-    
+def UVmap_cylindrical(vertices, if_inward=True):
+    """ UV mapping from xyz coordinates of inward or outward facing vertices
+    Args:
+        vertices: xyz coordinates of vertices
+        if_inward: if True, the vertices are inward facing, projection depth = xz_norm
+                   if False, the vertices are outward facing = max(xz_norm) - xz_norm
+        
+    Return:
+        uv_coords: uv coordinates of vertices (u=theta, v=y) 
+        depth_map: projection depth"""
+
+    uv_coords = []
     for i in range(vertices.shape[0]):
         x, y, z = vertices[i]
         theta = np.arctan2(z, x)
-        projected_vertices[i] = [radius * np.cos(theta), y, radius * np.sin(theta)]
+
+        # FIXME: only if mesh is geometrically centered at origin!!!!!!
+        theta = theta + np.pi /2
+        if theta < 0:
+            theta = theta + 2 * np.pi
+            
+        y = y
+        uv_coords.append([theta, y])
+
+    depth_map = np.linalg.norm(vertices[:, [0, 2]], axis=1)
+    if if_inward:
+        depth_map = np.max(depth_map) - depth_map
     
-    # depth in x-z plane relative to the cylinder
-    projected_depth = np.linalg.norm(vertices[:, [0, 2]], axis=1) - radius 
-    return projected_vertices, projected_depth
-
-
-def flatten_2d_uv(vertices):
-    """ Flatten the projected vertices onto a 2D plane screen"""
-    flattened_vertices = []
-    for i in range(vertices.shape[0]):
-        x, y, z = vertices[i]
-        theta = np.arctan2(z, x)
-        if theta < -np.pi/2:
-            theta += 2 * np.pi
-        flattened_vertices.append([theta, y])
-    return np.array(flattened_vertices)
-
-def normalize_uv_coordinates(uv_coords, 
-                             theta_range=(-np.pi/2, 3*np.pi/2), 
-                             y_range_out=(-9, 7), 
-                             y_range_in=(-8, 8), 
-                             is_outward=True):
-    theta_min, theta_max = theta_range
-    if is_outward:
-        y_min, y_max = y_range_out
-    else:
-        y_min, y_max = y_range_in
-    uv_coords[:, 0] = (uv_coords[:, 0] - theta_min) / (theta_max - theta_min)
-    uv_coords[:, 1] = (uv_coords[:, 1] - y_min) / (y_max - y_min)
-    return uv_coords
+    return np.array(uv_coords), depth_map
 
 
 
-def get_face_colors(triangles, vertex_colors):
-    face_colors = []
+def normalize_uv_coords(uv_coords, u_range, v_range, with_nl=False):
+    uv_norm_coords = np.copy(uv_coords)
+    u_min, u_max = u_range
+    v_min, v_max = v_range
+    uv_norm_coords[:, 0] = (uv_coords[:, 0] - u_min) / (u_max - u_min)
+    uv_norm_coords[:, 1] = (uv_coords[:, 1] - v_min) / (v_max - v_min)
+
+    return uv_norm_coords
+
+
+
+def get_tri_RGB(triangles, vertex_RGB):
+    """ Get the RGB of each triangle face from the RGB of its 3 vertices"""
+    tri_RGBs = []
     for triangle in triangles:
-        colors_3vert = vertex_colors[triangle]
+        colors_3vert = vertex_RGB[triangle]
         # Get the minimum color value for each channel
-        face_color = np.min(colors_3vert, axis=0)
-        face_colors.append(face_color)
-    return np.array(face_colors)
+        tri_rgb = np.mean(colors_3vert, axis=0) # FIXME: max (white [255,255,255] being the plaque) vs mean!!!!
+        tri_RGBs.append(tri_rgb)
+    return np.array(tri_RGBs)
 
 
-def convert_to_binary(label_images):
-    binary_images = np.any(label_images != 0, axis=-1).astype(np.uint8)
-    return binary_images
+def rasterize(sorted_tri, sorted_tri_RGB, uv_pixel, img):
+    for i, tri in enumerate(sorted_tri):
+        pts = uv_pixel[tri].reshape((-1, 1, 2)).astype(np.int32)
+        tri_RGB = tuple(int(c) for c in sorted_tri_RGB[i]) # convert to tuple for cv2.fillPoly
+        cv2.fillPoly(img, [pts], tri_RGB)
+    return img
+
+
+
+
+def rasterize_uv_to_image(uv_norm_coords, vert_depth, xx_triangles, vert_originRGB, vert_labelRGB, px=256, is_binary=True):
+
+    px_h = px # 256
+    px_w = px_h*8 # 2048
+    
+    # Scale uv_norm_coords by width and height to get pixel coordinates
+    uv_pixel = np.copy(uv_norm_coords)
+    uv_pixel[:, 0] = (uv_norm_coords[:, 0] * px_w-1).astype(np.int32)
+    uv_pixel[:, 1] = (uv_norm_coords[:, 1] * px_h-1).astype(np.int32)
+
+    # Calculate projection depth for each triangle face (mean projection depth of 3 vertices)
+    tri_depth = np.mean(vert_depth[xx_triangles], axis=1)
+
+    # Sort the triangles by depth (ascending)
+    sorted_tri_idx = np.argsort(tri_depth)
+    sorted_tri= xx_triangles[sorted_tri_idx]
+
+
+    """ Get original colors and labels for each triangle face"""
+    sorted_tri_originRGB = get_tri_RGB(sorted_tri, vert_originRGB)
+    sorted_tri_labelRGB = get_tri_RGB(sorted_tri, vert_labelRGB)
+    
+    # FIXME: convert all non-zero rgb values to white (255,255,255)!!!! i.e. binary label (plaque or non-plaque)
+    nonzero_RGB_con = np.max(sorted_tri_labelRGB, axis=1) > 0
+    sorted_tri_labelbiRGB = np.where(nonzero_RGB_con[:, np.newaxis], np.array([255, 255, 255]), np.array([0, 0, 0])) 
+    
+
+    """ Rasterize the triangles in sorted order of depth"""
+    # Initialize the image with black background
+    img_origin = np.zeros((px_h, px_w, 3), dtype=np.uint8)
+    img_label = np.zeros((px_h, px_w, 3), dtype=np.uint8)
+    # Rasterize
+    img_origin = rasterize(sorted_tri, sorted_tri_originRGB, uv_pixel, img_origin)
+    img_label = rasterize(sorted_tri, sorted_tri_labelRGB, uv_pixel, img_label)
+    # img_label = rasterize(sorted_tri, sorted_tri_labelbiRGB, uv_pixel, img_label) # FIXME: rasterize with binary label?
+
+    # print(f"Image shape: {img_origin.shape}")
+    assert img_origin.shape == img_label.shape, "Origin and label images have different shapes"
+
+    """ Simply return the entire complete image as a whole. 
+        Use Patchify function to divide the image into 8 patches later before training"""
+    
+    # FIXME: Not sure whether to convert to binary label for training?????
+    if is_binary:
+        img_label = np.where(img_label > 0, 1, 0).astype(np.uint8)
+
+    return img_origin, img_label, uv_pixel # img: 3 RGB channel np arrays
+
+
+""""""""""""""""""""""""""" 6. Test map back accuracy """""""""""""""""""""""""""
+def get_tri_center_uv(triangles, uv_pixels):
+    tri_center_uv = np.mean(uv_pixels[triangles], axis=1)
+    return tri_center_uv
+
+# Extract the color of each triangle face center from the predicted label image
+# Need to execute for each direction (outward, inward, upward)
+def get_tri_pred_label(tri_uvpx, pred_img_label):
+    tri_pred_label = []
+    px_h, px_w = pred_img_label.shape[:2]
+    for uv in tri_uvpx:
+        u, v = uv.astype(np.int32)
+        u = np.clip(u, 0, px_w-1)
+        v = np.clip(v, 0, px_h-1)
+        tri_pred_label.append(pred_img_label[v, u])
+    return np.array(tri_pred_label)
+
+
+def compute_metrics_tri(gt_labels, pred_labels, is_plaque = True):
+    """ Compute the IoU and Dice scores for the triangles """
+    # Convert RGB to binary scalar
+    gt_labels_bi = np.any(gt_labels > 0, axis=1).astype(np.int32)
+    pred_labels_bi = np.any(pred_labels > 0, axis=1).astype(np.int32)
+    # print(np.sum(gt_labels_bi), np.sum(pred_labels_bi))
+
+    if not is_plaque:
+        gt_labels_bi = 1 - gt_labels_bi
+        pred_labels_bi = 1 - pred_labels_bi
+        # print(np.sum(gt_labels_bi), np.sum(pred_labels_bi))
+
+    if np.sum(pred_labels_bi) <=50: # FIXME: to check
+        print("Too little predicted label")
+        return 1, 1
+
+    intersection = np.sum(np.logical_and(gt_labels_bi, pred_labels_bi))
+    union = np.sum(np.logical_or(gt_labels_bi, pred_labels_bi))
+    iou = intersection / union
+
+    intersection_bi = np.sum(np.logical_and(gt_labels_bi, pred_labels_bi))
+    dice = 2 * intersection_bi / (np.sum(gt_labels_bi) + np.sum(pred_labels_bi))
+    # if non-binary (3 channel)
+    # dice = 2/3 * intersection / (np.sum(np.any(gt_labels!=0,axis=1)) + np.sum(np.any(pred_labels!=0,axis=1)))
+    return iou, dice
+
+
+
+
+
 
 
 
@@ -363,6 +451,6 @@ if __name__ == "__main__":
 
     origin_dir = "D:\sunny\Codes\DPS\data_teethseg\origin"
     label_dir = "D:\sunny\Codes\DPS\data_teethseg\label"
-    save_dir = "D:\sunny\Codes\DPS\data_npy2d"
+    save_dir = "D:\sunny\Codes\DPS\data_png_io"
 
     process_all_files(origin_dir, label_dir, save_dir)
