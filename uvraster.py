@@ -14,11 +14,11 @@ import os
 def process_all_files(origin_dir, label_dir, save_dir):
     # create a dictionary to store the metrics
     metrics_dict = {}
-    for file in os.listdir(origin_dir):
+    for file in os.listdir(label_dir):
         if file.endswith(".ply"):
             mesh_name = file.split(".")[0]
             print(f"Processing {mesh_name}...")
-            origin_file_path = f"{origin_dir}/{mesh_name}.ply"
+            origin_file_path = f"{origin_dir}/{mesh_name}_origin.ply"
             label_file_path = f"{label_dir}/{mesh_name}.ply"
             raw_origin_mesh = o3d.io.read_triangle_mesh(origin_file_path)
             raw_label_mesh = o3d.io.read_triangle_mesh(label_file_path)
@@ -128,6 +128,13 @@ def process_single_mesh(raw_origin_mesh, raw_label_mesh, save_dir, mesh_name):
     save_origin_path = os.path.join(save_dir, "origin")
     save_label_path = os.path.join(save_dir, "label")
 
+    # ensure the info, origin and label folder exists, otherwise create a new folder
+    if not os.path.exists(os.path.join(save_dir, "info")):
+        os.makedirs(os.path.join(save_dir, "info"))
+    if not os.path.exists(save_origin_path):
+        os.makedirs(save_origin_path)
+    if not os.path.exists(save_label_path):
+        os.makedirs(save_label_path)
 
     for idx, (img_origin_xx, img_label_xx) in enumerate(zip([img_origin_up, img_origin_in, img_origin_out], [img_label_up, img_label_in, img_label_out])):
         origin_bgr = cv2.cvtColor(img_origin_xx, cv2.COLOR_RGB2BGR)
@@ -138,6 +145,7 @@ def process_single_mesh(raw_origin_mesh, raw_label_mesh, save_dir, mesh_name):
     # Save UV pixel coordinates and separation of triangles information in npz format
     reconst_info = {"uvpx_up": uv_pixel_up, "uvpx_in": uv_pixel_in, "uvpx_out": uv_pixel_out,
                     "tri_up": sorted_tri_up, "tri_in": sorted_tri_in, "tri_out": sorted_tri_out} # sorted_tri: sorted triangles by depth
+
     np.savez_compressed(os.path.join(save_dir, "info", f"{mesh_name}.npz"), **reconst_info)
     # Visaulize the rasterized images
     # Display the in- and outward large image for visualization 
@@ -632,8 +640,8 @@ def compute_metrics_tri(gt_labels, pred_labels, is_plaque = True):
 
 if __name__ == "__main__":
 
-    origin_dir = "D:\\sunny\\Codes\\DPS\\data_8w\\3d_ply\\origin"
-    label_dir = "D:\\sunny\\Codes\\DPS\\data_8w\\3d_ply\\label"
-    save_dir = "D:\\sunny\\Codes\\DPS\\data_8w\\2d_png"
+    origin_dir = "D:\\sunny\\Codes\\DPS\\database\\data_3w\\3d_ply\\origin"
+    label_dir = "D:\\sunny\\Codes\\DPS\\database\\data_3w\\3d_ply\\label"
+    save_dir = "D:\\sunny\\Codes\\DPS\\database\\data_3w\\2d_png"
 
     process_all_files(origin_dir, label_dir, save_dir)
