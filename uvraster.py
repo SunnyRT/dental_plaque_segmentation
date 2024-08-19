@@ -190,18 +190,18 @@ def process_single_mesh(raw_origin_mesh, raw_label_mesh, save_dir, mesh_name):
     pred_img_label_out = img_label_out/255  
     
 
-    tri_uvpx_up = get_tri_center_uv(up_triangles, uv_pixel_up)
-    tri_uvpx_in = get_tri_center_uv(in_triangles, uv_pixel_in)
-    tri_uvpx_out = get_tri_center_uv(out_triangles, uv_pixel_out)
+    tri_uvpx_up = get_tri_center_uv(sorted_tri_up, uv_pixel_up) # TODO: changed from up_triangles to sorted_tri_up
+    tri_uvpx_in = get_tri_center_uv(sorted_tri_in, uv_pixel_in) # TODO:
+    tri_uvpx_out = get_tri_center_uv(sorted_tri_out, uv_pixel_out) # TODO:
         
     tri_pred_label_up = get_tri_pred_label(tri_uvpx_up, pred_img_label_up)
     tri_pred_label_in = get_tri_pred_label(tri_uvpx_in, pred_img_label_in)
     tri_pred_label_out = get_tri_pred_label(tri_uvpx_out, pred_img_label_out)
 
     # Get the GT label for each triangle face
-    tri_GT_labelGRB_up = get_tri_RGB(up_triangles, vertices_labelRGB)/255
-    tri_GT_labelGRB_in = get_tri_RGB(in_triangles, vertices_labelRGB)/255
-    tri_GT_labelGRB_out = get_tri_RGB(out_triangles, vertices_labelRGB)/255
+    tri_GT_labelGRB_up = get_tri_RGB(sorted_tri_up, vertices_labelRGB)/255 # TODO: changed from up_triangles to sorted_tri_up
+    tri_GT_labelGRB_in = get_tri_RGB(sorted_tri_in, vertices_labelRGB)/255 # TODO:
+    tri_GT_labelGRB_out = get_tri_RGB(sorted_tri_out, vertices_labelRGB)/255 # TODO:
 
     # Compare the predicted labels with the ground truth labels for all triangle faces
     metrics_up = compute_metrics_tri(tri_GT_labelGRB_up, tri_pred_label_up)
