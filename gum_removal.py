@@ -181,10 +181,11 @@ def display_region_growth_outcome(input_file_path, output_file_path, seg_labels)
 def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, y_threshold, normal_threshold, color_threshold):
     for file_name in os.listdir(input_dir):
         # split by "_" to get the base name
-        base_name  = file_name.split("_")[0]
+        base_name  = file_name.split(".")[0] # TODO: might need adjustment depending on the file name format
 
-        print(f"Processing {base_name}")
+        
         if file_name.endswith(".ply"):
+            print(f"Processing {base_name}")
             input_file_path = os.path.join(input_dir, file_name)
             output_file_path = os.path.join(output_dir, file_name)
             input_file_path_label = os.path.join(input_dir_label, f"{base_name}.ply")
@@ -209,17 +210,17 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
 
             # Initialize seg_labels array
             seg_labels = np.full(len(vertices), -1, dtype=int)        
-            n_teeth_triangles = np.count_nonzero(seg_labels == -1)
+            n_teeth_vertices = np.count_nonzero(seg_labels == -1)
             n_itr = 0    
 
-            while n_teeth_triangles > 22000 and n_itr < 20: # face numbers reduced by half
+            while n_teeth_vertices > 80000 and n_itr < 10000: # face numbers reduced by half
                 n_itr += 1
                 seed_index = find_seed_point(mesh, seg_labels)
                 seg_labels = region_growing_segmentation(mesh, adjacency_list, seed_index, seg_labels, y_threshold, normal_threshold, color_threshold)
-                n_teeth_triangles = np.count_nonzero(seg_labels == -1)
-                # print(f"Iteration {n_itr}: Number of teeth triangles: {n_teeth_triangles}")
+                n_teeth_vertices = np.count_nonzero(seg_labels == -1)
+                # print(f"Iteration {n_itr}: Number of teeth vertices: {n_teeth_vertices}")
 
-            print(f"Itr {n_itr} => Number of teeth, gum, boundary triangles: {n_teeth_triangles}, {np.count_nonzero(seg_labels == 1)}, {np.count_nonzero(seg_labels == 0)}")
+            print(f"Itr {n_itr} => Number of teeth, gum, boundary vertices: {n_teeth_vertices}, {np.count_nonzero(seg_labels == 1)}, {np.count_nonzero(seg_labels == 0)}")
 
 
 
@@ -276,14 +277,15 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
 
 """-------------------------Set parameters-------------------------"""
 if __name__ == "__main__":
-    input_dir = "D:\sunny\Codes\DPS\data\Origin"
-    output_dir = "D:\sunny\Codes\DPS\data\Origin_seg"
-    input_dir_label = "D:\sunny\Codes\DPS\data\Label"
-    output_dir_label = "D:\sunny\Codes\DPS\data\Label_seg"
+    input_dir = "D:/sunny/Codes/DPS/database/raw_new/Ordered/origin"
+    output_dir = "D:/sunny/Codes/DPS/database/raw_new/gum_removed/origin"
+    input_dir_label = "D:/sunny/Codes/DPS/database/raw_new/Ordered/label"
+    output_dir_label = "D:/sunny/Codes/DPS/database/raw_new/gum_removed/label"
 
-    y_threshold = 11.0
-    normal_threshold = 0.986 
-    color_threshold = 0.05
+    y_threshold = 10
+    normal_threshold = 0.992 
+    color_threshold = 0.03
+    number_of_vertices = 80000
 
     process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, y_threshold, normal_threshold, color_threshold)
 
