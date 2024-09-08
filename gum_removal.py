@@ -2,7 +2,7 @@ import open3d as o3d
 import numpy as np
 import os
 import shutil
-
+import copy
 
 """-------------------------PCA normalization-------------------------"""
 def align_mesh_principal_axes(mesh):
@@ -157,28 +157,62 @@ def region_growing_segmentation(mesh, adjacency_list, seed_index, seg_labels, y_
 
 
 
-def display_region_growth_outcome(input_file_path, output_file_path, seg_labels):
+def remove_redundant_vertices(mesh):
+    # Get the vertices and triangles
+    vertices = np.asarray(mesh.vertices)
+    triangles = np.asarray(mesh.triangles)
+    
+    # Identify unique vertex indices used in the triangles
+    unique_vertex_indices = np.unique(triangles)
+    
+    # Create a mapping from old vertex indices to new ones
+    old_to_new_indices = {old_idx: new_idx for new_idx, old_idx in enumerate(unique_vertex_indices)}
+    
+    # Create a new list of vertices that are only the used ones
+    new_vertices = vertices[unique_vertex_indices]
+    
+    # Update triangle indices to the new vertex indices
+    new_triangles = np.array([[old_to_new_indices[old_idx] for old_idx in triangle] for triangle in triangles])
+    
+    # Create a new mesh with the cleaned vertices and updated triangles
+    cleaned_mesh = o3d.geometry.TriangleMesh()
+    cleaned_mesh.vertices = o3d.utility.Vector3dVector(new_vertices)
+    cleaned_mesh.triangles = o3d.utility.Vector3iVector(new_triangles)
+    
+    # Copy colors, normals, etc. if they exist
+    if mesh.has_vertex_colors():
+        cleaned_mesh.vertex_colors = o3d.utility.Vector3dVector(np.asarray(mesh.vertex_colors)[unique_vertex_indices])
+    if mesh.has_vertex_normals():
+        cleaned_mesh.vertex_normals = o3d.utility.Vector3dVector(np.asarray(mesh.vertex_normals)[unique_vertex_indices])
+    
+    return cleaned_mesh
+
+
+
+def display_region_growth_outcome(mesh, seg_labels, axes, bounding_box):
     # Duplicate the original mesh
-    # Update the vertex colors based on labels for visualiation
-
-    shutil.copyfile(input_file_path, output_file_path)
-    segmented_mesh = o3d.io.read_triangle_mesh(output_file_path)
-
-    colors = np.asarray(segmented_mesh.vertex_colors)
+    mesh_copy = copy.deepcopy(mesh)
+    
+    # Update the vertex colors based on labels for visualization
+    colors = np.asarray(mesh_copy.vertex_colors)
     for i in range(len(seg_labels)):
         if seg_labels[i] == 1:
             colors[i] = [0, 1, 0]  # Green for label 1
         elif seg_labels[i] == 0:
             colors[i] = [1, 0, 0]  # Red for label 0
-        # Else keep the original color for label -1
+        # Else keep the original color for label -1 (default color)
 
-    segmented_mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
-    o3d.io.write_triangle_mesh(output_file_path, segmented_mesh)
+    # Assign the updated colors back to the mesh
+    mesh_copy.vertex_colors = o3d.utility.Vector3dVector(colors)
+    
+    # Visualize the segmented mesh with color labels
+    o3d.visualization.draw_geometries([mesh_copy, axes, bounding_box])
 
 
 
-
-def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, y_threshold, normal_threshold, color_threshold):
+def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
+                      y_threshold, normal_threshold, color_threshold, 
+                      num_vert_threshold, num_components=1):
     for file_name in os.listdir(input_dir):
         # split by "_" to get the base name
         base_name  = file_name.split(".")[0] # TODO: might need adjustment depending on the file name format
@@ -186,13 +220,13 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
         
         if file_name.endswith(".ply"):
             print(f"Processing {base_name}")
-            input_file_path = os.path.join(input_dir, file_name)
-            output_file_path = os.path.join(output_dir, file_name)
-            input_file_path_label = os.path.join(input_dir_label, f"{base_name}.ply")
-            output_file_path_label = os.path.join(output_dir_label, f"{base_name}.ply")
+            input_file_path_origin = os.path.join(input_dir, file_name)
+            output_file_path_origin = os.path.join(output_dir, file_name)
+            input_file_path_label = os.path.join(input_dir_label, file_name)
+            output_file_path_label = os.path.join(output_dir_label, file_name)
 
             # Load the mesh
-            mesh = o3d.io.read_triangle_mesh(input_file_path)
+            mesh = o3d.io.read_triangle_mesh(input_file_path_origin)
             
             """-----------Normalize the PCA axes and bb center the mesh-----------"""
             """ Track the transformation matrices, which will be applied for the label mesh later"""
@@ -213,7 +247,7 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
             n_teeth_vertices = np.count_nonzero(seg_labels == -1)
             n_itr = 0    
 
-            while n_teeth_vertices > 80000 and n_itr < 10000: # face numbers reduced by half
+            while n_teeth_vertices > num_vert_threshold and n_itr < 10000: # face numbers reduced by half
                 n_itr += 1
                 seed_index = find_seed_point(mesh, seg_labels)
                 seg_labels = region_growing_segmentation(mesh, adjacency_list, seed_index, seg_labels, y_threshold, normal_threshold, color_threshold)
@@ -230,14 +264,32 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
             if len(teeth_triangles) == 0:
                 raise ValueError("No teeth region found.")
 
-            # shutil.copyfile(input_file_path, output_file_path)
+            # shutil.copyfile(input_file_path_origin, input_file_path_origin)
             mesh.triangles = o3d.utility.Vector3iVector(teeth_triangles)
 
             # Remove disconnected small component pieces => preserve the largest connected component
             comps_label = np.array(mesh.cluster_connected_triangles()[0])
             assert len(comps_label) == len(teeth_triangles), "Mismatch between number of triangles and size of comps_label array."
-            maxcomp = np.argmax(np.bincount(comps_label)) # largest connected component
-            mask_maxcomp = (comps_label == maxcomp)
+            
+            # largest connected component
+            maxcomp = np.argmax(np.bincount(comps_label))
+            # second largest connected component
+            maxcomp2 = np.argmax(np.bincount(comps_label, weights = (comps_label != maxcomp).astype(int)))
+            # third largest connected component
+            maxcomp3 = np.argmax(np.bincount(comps_label, weights = (comps_label != maxcomp).astype(int) & (comps_label != maxcomp2).astype(int)))
+            maxcomp4 = np.argmax(np.bincount(comps_label, weights = (comps_label != maxcomp).astype(int) & (comps_label != maxcomp2).astype(int) & (comps_label != maxcomp3).astype(int)))
+            
+            
+            if num_components == 1:
+                mask_maxcomp = (comps_label == maxcomp)
+            elif num_components == 2:
+                mask_maxcomp = (comps_label == maxcomp) | (comps_label == maxcomp2)
+            elif num_components == 3:
+                mask_maxcomp = (comps_label == maxcomp) | (comps_label == maxcomp2) | (comps_label == maxcomp3)
+            elif num_components == 4:
+                mask_maxcomp = (comps_label == maxcomp) | (comps_label == maxcomp2) | (comps_label == maxcomp3) | (comps_label == maxcomp4)
+
+            
             teeth_triangles = teeth_triangles[mask_maxcomp]
             mesh.triangles = o3d.utility.Vector3iVector(teeth_triangles)
             
@@ -245,7 +297,10 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
             mesh.orient_triangles()
             mesh.compute_vertex_normals()
 
-            o3d.io.write_triangle_mesh(output_file_path, mesh)
+            # Remove redundant vertices
+            mesh = remove_redundant_vertices(mesh)
+            
+            o3d.io.write_triangle_mesh(output_file_path_origin, mesh)
 
 
             """-----------Segment the corresponding label mesh-----------"""
@@ -265,6 +320,8 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
                 # Correct face normals
                 mesh_label.orient_triangles()
                 mesh_label.compute_vertex_normals()
+                # Remove redundant vertices
+                mesh_label = remove_redundant_vertices(mesh_label)
                 o3d.io.write_triangle_mesh(output_file_path_label, mesh_label)
 
 
@@ -278,9 +335,9 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, 
 """-------------------------Set parameters-------------------------"""
 if __name__ == "__main__":
     input_dir = "D:/sunny/Codes/DPS/database/raw_new/Ordered/origin"
-    output_dir = "D:/sunny/Codes/DPS/database/raw_new/gum_removed/origin"
+    output_dir = "D:/sunny/Codes/DPS/database/raw_new/gum_removed2/origin"
     input_dir_label = "D:/sunny/Codes/DPS/database/raw_new/Ordered/label"
-    output_dir_label = "D:/sunny/Codes/DPS/database/raw_new/gum_removed/label"
+    output_dir_label = "D:/sunny/Codes/DPS/database/raw_new/gum_removed2/label"
 
     y_threshold = 10
     normal_threshold = 0.992 
