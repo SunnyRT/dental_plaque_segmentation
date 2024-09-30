@@ -216,9 +216,9 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label,
     for file_name in os.listdir(input_dir):
         # split by "_" to get the base name
         base_name  = file_name.split(".")[0] # TODO: might need adjustment depending on the file name format
-
+        base_name = int(base_name)
         
-        if file_name.endswith(".ply"):
+        if file_name.endswith(".ply") and base_name > 5700:
             print(f"Processing {base_name}")
             input_file_path_origin = os.path.join(input_dir, file_name)
             output_file_path_origin = os.path.join(output_dir, file_name)
@@ -335,14 +335,14 @@ def process_all_files(input_dir, output_dir, input_dir_label, output_dir_label,
 """-------------------------Set parameters-------------------------"""
 if __name__ == "__main__":
     input_dir = "D:/sunny/Codes/DPS/database/raw_new/Ordered/origin"
-    output_dir = "D:/sunny/Codes/DPS/database/raw_new/gum_removed2/origin"
+    output_dir = "D:/sunny/Codes/DPS/database/raw_new/gum_removed3/origin"
     input_dir_label = "D:/sunny/Codes/DPS/database/raw_new/Ordered/label"
-    output_dir_label = "D:/sunny/Codes/DPS/database/raw_new/gum_removed2/label"
+    output_dir_label = "D:/sunny/Codes/DPS/database/raw_new/gum_removed3/label"
 
     y_threshold = 10
     normal_threshold = 0.992 
     color_threshold = 0.03
     number_of_vertices = 80000
 
-    process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, y_threshold, normal_threshold, color_threshold)
+    process_all_files(input_dir, output_dir, input_dir_label, output_dir_label, y_threshold, normal_threshold, color_threshold, number_of_vertices, num_components=1)
 
