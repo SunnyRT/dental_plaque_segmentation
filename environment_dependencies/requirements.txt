@@ -1,0 +1,6 @@
+git+https://github.com/facebookresearch/segment-anything.git
+datasets
+monai
+tqdm
+matplotlib
+scikit-learn
